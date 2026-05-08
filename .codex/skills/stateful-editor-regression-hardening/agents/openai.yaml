@@ -1,0 +1,4 @@
+interface:
+  display_name: "Stateful Editor Regression Hardening"
+  short_description: "Harden rich-text editor regressions with TDD."
+  default_prompt: "Use this skill to reproduce, test, fix, and validate history-dependent editor regressions such as caret geometry, selection drift, paste formatting, and list or heading state bugs."
