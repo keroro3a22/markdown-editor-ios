@@ -6459,7 +6459,14 @@ final class MarkdownEditorRuntimeBehaviorMatrixTests: MarkdownTestCase {
 
         let usedRect = textView.layoutManager.lineFragmentUsedRect(forGlyphAt: glyphIndex, effectiveRange: nil)
         if !usedRect.isEmpty {
-            return textView.textContainerInset.top + usedRect.midY
+            // Centre on the visual glyph line (top of used rect + half the
+            // font's lineHeight). TextKit extends the used rect downward by
+            // lineSpacing as bottom padding, so usedRect.midY sits below the
+            // rendered cap-height centre — keep the oracle aligned with the
+            // engine's caret formula.
+            let font = attributedText.attribute(.font, at: characterLocation, effectiveRange: nil) as? UIFont
+            let lineHeight = font?.lineHeight ?? usedRect.height
+            return textView.textContainerInset.top + usedRect.minY + lineHeight / 2
         }
 
         return textView.textContainerInset.top + logicalLineMidY(
