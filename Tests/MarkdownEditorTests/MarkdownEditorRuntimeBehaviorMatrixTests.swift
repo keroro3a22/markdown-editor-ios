@@ -6518,7 +6518,9 @@ final class MarkdownEditorRuntimeBehaviorMatrixTests: MarkdownTestCase {
 
     private func lineAdvance(at characterLocation: Int, attributedText: NSAttributedString) -> CGFloat {
         let paragraphStyle = attributedText.attribute(.paragraphStyle, at: characterLocation, effectiveRange: nil) as? NSParagraphStyle
-        return lineHeight(at: characterLocation, attributedText: attributedText) + (paragraphStyle?.paragraphSpacing ?? 0)
+        return lineHeight(at: characterLocation, attributedText: attributedText)
+            + (paragraphStyle?.lineSpacing ?? 0)
+            + (paragraphStyle?.paragraphSpacing ?? 0)
     }
 
     private func lineHeight(at characterLocation: Int, attributedText: NSAttributedString) -> CGFloat {
