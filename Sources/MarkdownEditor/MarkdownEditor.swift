@@ -199,77 +199,56 @@ public final class MarkdownEditorContentView: UIView {
         isProgrammaticLoad = true
         defer { isProgrammaticLoad = wasProgrammaticLoad }
 
-        // Parse and validate through domain
-        let parseResult = domainBridge.parseDocument(document)
-        
-        switch parseResult {
-        case .success(let parsed):
-            let applyResult: Result<Void, DomainError>
+        do {
+            try MarkdownImporter.importMarkdown(document.content, into: lexicalView.editor)
+            domainBridge.syncFromLexical()
+        } catch {
+            return .failure(.invalidMarkdown(error.localizedDescription))
+        }
+
+        // If document is empty and startWithTitle is enabled, apply H1 formatting
+        if document.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && configuration.behavior.startWithTitle {
             do {
-                try MarkdownImporter.importMarkdown(document.content, into: lexicalView.editor)
-                domainBridge.syncFromLexical()
-                applyResult = .success(())
-            } catch {
-                applyResult = domainBridge.applyToLexical(parsed, editor: lexicalView.editor)
-            }
-            
-            switch applyResult {
-            case .success:
-                // If document is empty and startWithTitle is enabled, apply H1 formatting
-                if document.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty 
-                    && configuration.behavior.startWithTitle {
-                    // For empty documents, apply H1 formatting directly to Lexical
-                    // This bypasses the domain validation which expects existing content
-                    do {
-                        try lexicalView.editor.update {
-                            // Ensure there is a selection; create one at the start of the first block if missing
-                            var selection = try getSelection() as? RangeSelection
-                            if selection == nil,
-                               let root = getRoot(),
-                               let first = root.getFirstChild() as? ElementNode {
-                                let point = Point(key: first.key, offset: 0, type: .element)
-                                let newSelection = RangeSelection(anchor: point, focus: point, format: TextFormat())
-                                getActiveEditorState()?.selection = newSelection
-                                selection = newSelection
-                            }
-                            if let selection = selection {
-                                setBlocksType(selection: selection) { createHeadingNode(headingTag: .h1) }
-                            }
-                        }
-                        
-                        // Sync domain bridge state after applying the formatting
-                        domainBridge.syncFromLexical()
-                    } catch {
-                        // Silently handle the error for now - startWithTitle is a nice-to-have feature
+                try lexicalView.editor.update {
+                    // Ensure there is a selection; create one at the start of the first block if missing
+                    var selection = try getSelection() as? RangeSelection
+                    if selection == nil,
+                       let root = getRoot(),
+                       let first = root.getFirstChild() as? ElementNode {
+                        let point = Point(key: first.key, offset: 0, type: .element)
+                        let newSelection = RangeSelection(anchor: point, focus: point, format: TextFormat())
+                        getActiveEditorState()?.selection = newSelection
+                        selection = newSelection
+                    }
+                    if let selection = selection {
+                        setBlocksType(selection: selection) { createHeadingNode(headingTag: .h1) }
                     }
                 }
 
-                canonicalizeSingleEmptyRootBlockIfNeeded()
-                syncNativeSelectionToLexicalSelection()
-                
-                // Refresh placeholder visibility after content load to prevent overlap when content is non-empty
-                lexicalView.showPlaceholderText()
-
-                if resetHistory {
-                    undoStack.removeAll()
-                    redoStack.removeAll()
-                    lastHistoryChangeAt = nil
-                }
-                markExportDirty()
-                lastHistoryMarkdown = exportMarkdownForHistory()
-
-                delegate?.markdownEditor(self, didLoadDocument: document)
-                return .success(())
-                
-            case .failure(let error):
-                let editorError = MarkdownEditorError.invalidMarkdown(error.localizedDescription)
-                return .failure(editorError)
+                // Sync domain bridge state after applying the formatting
+                domainBridge.syncFromLexical()
+            } catch {
+                // Silently handle the error for now - startWithTitle is a nice-to-have feature
             }
-            
-        case .failure(let error):
-            let editorError = MarkdownEditorError.invalidMarkdown(error.localizedDescription)
-            return .failure(editorError)
         }
+
+        canonicalizeSingleEmptyRootBlockIfNeeded()
+        syncNativeSelectionToLexicalSelection()
+
+        // Refresh placeholder visibility after content load to prevent overlap when content is non-empty
+        lexicalView.showPlaceholderText()
+
+        if resetHistory {
+            undoStack.removeAll()
+            redoStack.removeAll()
+            lastHistoryChangeAt = nil
+        }
+        markExportDirty()
+        lastHistoryMarkdown = exportMarkdownForHistory()
+
+        delegate?.markdownEditor(self, didLoadDocument: document)
+        return .success(())
     }
     
     public func exportMarkdown() -> MarkdownEditorResult<MarkdownDocument> {
