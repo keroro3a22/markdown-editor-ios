@@ -1192,7 +1192,10 @@ class MarkdownRuntimeTestCase: MarkdownTestCase {
         case .codeBlock:
             return createCodeNode()
         case .unorderedList, .orderedList:
-            throw XCTSkip("List roots are not empty text blocks in this fixture")
+            // Callers must filter list cases out and drive list coverage through
+            // the list suites; reaching this is a test bug, not a skippable state.
+            XCTFail("List blocks cannot host empty-text-block fixtures")
+            throw LexicalError.invariantViolation("makeEmptyElement does not support list blocks")
         }
     }
 
@@ -1783,6 +1786,11 @@ class MarkdownRuntimeTestCase: MarkdownTestCase {
         XCTAssertEqual(typingStyle?.firstLineHeadIndent ?? 0, caretStyle?.firstLineHeadIndent ?? 0, accuracy: 0.5, "Typing firstLineHeadIndent should match caret: \(context)", file: file, line: line)
         XCTAssertEqual(typingStyle?.headIndent ?? 0, caretStyle?.headIndent ?? 0, accuracy: 0.5, "Typing headIndent should match caret: \(context)", file: file, line: line)
         XCTAssertEqual(typingAttributes[.listItem] != nil, caretAttributes[.listItem] != nil, "Typing list item attribute should match caret: \(context)", file: file, line: line)
+    }
+    func applyEmptyBlockTransition(_ blockCase: CanonicalBlockCase) {
+        markdownEditor.setBlockType(blockCase.block)
+        typeText(blockCase.text)
+        deleteCharacters(blockCase.text.utf16.count)
     }
 }
 

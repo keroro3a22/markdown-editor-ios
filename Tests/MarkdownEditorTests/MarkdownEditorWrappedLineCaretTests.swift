@@ -51,13 +51,12 @@ final class MarkdownEditorWrappedLineCaretTests: MarkdownTestCase {
         flushLayout()
 
         let caret = rawCaretRect()
-        let bodyInset = markdownEditor.textView.textContainerInset.left
-            + markdownEditor.textView.textContainer.lineFragmentPadding
-        XCTAssertGreaterThanOrEqual(caret.minX, bodyInset - 1, "Caret should not land left of body inset")
-        XCTAssertLessThanOrEqual(
+        let expectedX = glyphOriginX(forCharacterAt: target.location)
+        XCTAssertEqual(
             caret.minX,
-            bodyInset + 30,
-            "Caret on wrapped second line should land near the left inset (≈\(bodyInset)pt). Actual minX=\(caret.minX) — looks like the second-line caret is being offset by the first-line width."
+            expectedX,
+            accuracy: 1.5,
+            "Caret on wrapped second line should agree with TextKit's glyph position (\(expectedX)pt). Actual minX=\(caret.minX) — looks like the second-line caret is being offset by the first-line width."
         )
         XCTAssertLessThanOrEqual(caret.maxX, markdownEditor.textView.bounds.width, "Caret should stay inside the visible width")
     }
@@ -97,12 +96,12 @@ final class MarkdownEditorWrappedLineCaretTests: MarkdownTestCase {
         flushLayout()
 
         let caret = rawCaretRect()
-        let bodyInset = markdownEditor.textView.textContainerInset.left
-            + markdownEditor.textView.textContainer.lineFragmentPadding
-        XCTAssertLessThanOrEqual(
+        let expectedX = glyphOriginX(forCharacterAt: secondLineStart)
+        XCTAssertEqual(
             caret.minX,
-            bodyInset + 30,
-            "Heading caret on wrapped second line (char \(secondLineStart)) should land near the left inset (≈\(bodyInset)pt). Actual minX=\(caret.minX)."
+            expectedX,
+            accuracy: 1.5,
+            "Heading caret on wrapped second line (char \(secondLineStart)) should agree with TextKit's glyph position (\(expectedX)pt). Actual minX=\(caret.minX)."
         )
     }
 
@@ -242,17 +241,32 @@ final class MarkdownEditorWrappedLineCaretTests: MarkdownTestCase {
         moveNativeCaret(toLocation: visibleRange.location + clampedOffset)
     }
 
+    /// TextKit's rendered glyph X for the character at `location` — the
+    /// gold-standard caret position oracle.
+    private func glyphOriginX(forCharacterAt location: Int) -> CGFloat {
+        let tv = markdownEditor.textView
+        tv.layoutManager.ensureLayout(for: tv.textContainer)
+        let glyphIndex = tv.layoutManager.glyphIndexForCharacter(at: location)
+        let glyphLocation = tv.layoutManager.location(forGlyphAt: glyphIndex)
+        let lineFragment = tv.layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: nil)
+        return tv.textContainerInset.left + lineFragment.origin.x + glyphLocation.x
+    }
+
     private func characterIndexOfSecondVisualLineStart() throws -> Int {
         let tv = markdownEditor.textView
         tv.layoutManager.ensureLayout(for: tv.textContainer)
         var glyphIndex = 0
         let totalGlyphs = tv.layoutManager.numberOfGlyphs
         var firstLineRange = NSRange(location: 0, length: 0)
-        guard totalGlyphs > 0 else { throw XCTSkip("No glyphs") }
+        guard totalGlyphs > 0 else {
+            XCTFail("Fixture rendered no glyphs — the wrapped-line fixture is broken, not skippable")
+            throw LexicalError.invariantViolation("no glyphs")
+        }
         _ = tv.layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: &firstLineRange)
         let secondLineGlyphStart = firstLineRange.upperBound
         guard secondLineGlyphStart < totalGlyphs else {
-            throw XCTSkip("Text did not wrap into a second visual line")
+            XCTFail("Fixture did not wrap into a second visual line — lengthen the fixture, do not skip")
+            throw LexicalError.invariantViolation("fixture did not wrap")
         }
         let charRange = tv.layoutManager.characterRange(
             forGlyphRange: NSRange(location: secondLineGlyphStart, length: 1),
