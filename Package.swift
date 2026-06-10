@@ -16,11 +16,11 @@ let package = Package(
             targets: ["MarkdownEditor"]),
     ],
     dependencies: [
-        // Pinned to the fork's 0.3.0 tag by revision (an exact-version pin is impossible
+        // Pinned to the fork's 0.3.2 tag by revision (an exact-version pin is impossible
         // while the fork depends on swift-markdown@main). Bump deliberately: tag the fork,
         // then update this SHA. For local two-repo iteration, drag ../lexical-ios into the
         // Xcode workspace as a local package override; this pin only governs fresh resolves.
-        .package(url: "https://github.com/jcfontecha/lexical-ios.git", revision: "a78e6717b3b329e6b2d5a2c92ee40c22882037bd")
+        .package(url: "https://github.com/jcfontecha/lexical-ios.git", revision: "1ac66f000fcb4cdbd508ba3b6c18ff67b748dd49")
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.

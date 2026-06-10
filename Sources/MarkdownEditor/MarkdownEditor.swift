@@ -948,12 +948,18 @@ public final class MarkdownEditorContentView: UIView {
             try lexicalView.editor.update {
                 guard let selection = try? getSelection() as? RangeSelection else { return }
                 if selection.isCollapsed(), self.shouldInsertMarkdownPasteAsBlocks(text) {
-                    didInsert = self.insertMarkdownPasteBlocks(nodes, at: selection)
+                    didInsert = try self.insertMarkdownPasteBlocks(nodes, at: selection)
                 } else {
-                    didInsert = (try? selection.insertNodes(nodes: nodes, selectStart: false)) == true
+                    didInsert = try selection.insertNodes(nodes: nodes, selectStart: false)
                 }
             }
         } catch {
+            // Lexical commits partial mutations on inner errors; restore the
+            // pre-paste state and let the text fall through to plain insertion.
+            isApplyingUndoRedo = true
+            defer { isApplyingUndoRedo = false }
+            try? lexicalView.editor.setEditorState(beforeEditorState.clone(selection: nil))
+            logger.logSimpleEvent("PASTE_ROLLBACK", details: "Markdown paste failed; restored prior state: \(error.localizedDescription)")
             return false
         }
 
@@ -1001,37 +1007,33 @@ public final class MarkdownEditorContentView: UIView {
         return trimmed.range(of: #"^\d+\. "#, options: .regularExpression) != nil
     }
 
-    private func insertMarkdownPasteBlocks(_ nodes: [Node], at selection: RangeSelection) -> Bool {
+    private func insertMarkdownPasteBlocks(_ nodes: [Node], at selection: RangeSelection) throws -> Bool {
         guard !nodes.isEmpty,
               let anchorNode = try? selection.anchor.getNode(),
               let topLevel = try? anchorNode.getTopLevelElementOrThrow() else {
             return false
         }
 
-        do {
-            var insertionTarget: Node
-            if topLevel.isEmpty(), let first = nodes.first {
-                _ = try topLevel.replace(replaceWith: first)
-                insertionTarget = first
-                for node in nodes.dropFirst() {
-                    insertionTarget = try insertionTarget.insertAfter(nodeToInsert: node)
-                }
-            } else {
-                insertionTarget = topLevel
-                for node in nodes {
-                    insertionTarget = try insertionTarget.insertAfter(nodeToInsert: node)
-                }
+        var insertionTarget: Node
+        if topLevel.isEmpty(), let first = nodes.first {
+            _ = try topLevel.replace(replaceWith: first)
+            insertionTarget = first
+            for node in nodes.dropFirst() {
+                insertionTarget = try insertionTarget.insertAfter(nodeToInsert: node)
             }
-
-            if let element = insertionTarget as? ElementNode {
-                _ = try? element.selectEnd()
-            } else {
-                _ = try? insertionTarget.selectNext(anchorOffset: nil, focusOffset: nil)
+        } else {
+            insertionTarget = topLevel
+            for node in nodes {
+                insertionTarget = try insertionTarget.insertAfter(nodeToInsert: node)
             }
-            return true
-        } catch {
-            return false
         }
+
+        if let element = insertionTarget as? ElementNode {
+            _ = try? element.selectEnd()
+        } else {
+            _ = try? insertionTarget.selectNext(anchorOffset: nil, focusOffset: nil)
+        }
+        return true
     }
     
     // MARK: - Keystroke Event Logging
@@ -1275,74 +1277,85 @@ public final class MarkdownEditorContentView: UIView {
 
         // Perform the conversion as a single editor update to keep Lexical + native selection in sync.
         // Return true so Lexical does not insert the actual space character.
-        try? lexicalView.editor.update {
-            guard let selection = try? getSelection() as? RangeSelection else { return }
-            guard selection.isCollapsed() else { return }
+        // Lexical commits partial mutations on inner errors, so a mid-sequence failure
+        // restores the pre-conversion state and falls through to a plain space.
+        let beforeEditorState = lexicalView.editor.getEditorState().clone(selection: nil)
+        do {
+            try lexicalView.editor.update {
+                guard let selection = try? getSelection() as? RangeSelection else { return }
+                guard selection.isCollapsed() else { return }
 
-            guard let textNode: TextNode = getNodeByKey(key: planned.textNodeKey),
-                  let paragraph = textNode.getParent() as? ParagraphNode,
-                  paragraph.getParent() is RootNode else { return }
+                guard let textNode: TextNode = getNodeByKey(key: planned.textNodeKey),
+                      let paragraph = textNode.getParent() as? ParagraphNode,
+                      paragraph.getParent() is RootNode else { return }
 
-            // Remove the marker text so the new list item starts empty.
-            // Delete backwards `markerText.count` times.
-            for _ in 0..<planned.markerText.count {
-                try? selection.deleteCharacter(isBackwards: true)
-            }
-
-            switch planned {
-            case .heading(let level, _, _):
-                _ = try? textNode.setText("")
-                let heading = createHeadingNode(headingTag: level.lexicalType)
-                _ = try? paragraph.replace(replaceWith: heading)
-                let textAnchor = createTextNode(text: emptyTextCaretAnchor)
-                try? heading.append([textAnchor])
-                let anchor = Point(key: textAnchor.key, offset: 0, type: .text)
-                try? setSelection(RangeSelection(anchor: anchor, focus: anchor, format: selection.format))
-                return
-
-            case .list(let kind, _, let plannedStart, _):
-                let listType: ListType = kind == "ordered" ? .number : .bullet
-                let start: Int = plannedStart ?? 1
-
-                // Create an empty list item with ZWSP to ensure the bullet/number renders and the caret has a text anchor.
-                let listItem = ListItemNode()
-                let zwsp = createTextNode(text: emptyTextCaretAnchor)
-                try? listItem.append([zwsp])
-
-                func selectZWSP() {
-                    let p = Point(key: zwsp.key, offset: 0, type: .text)
-                    getActiveEditorState()?.selection = RangeSelection(anchor: p, focus: p, format: TextFormat())
+                // Remove the marker text so the new list item starts empty.
+                // Delete backwards `markerText.count` times.
+                for _ in 0..<planned.markerText.count {
+                    try selection.deleteCharacter(isBackwards: true)
                 }
 
-                // Merge with adjacent same-type lists if present; otherwise replace the paragraph with a new list.
-                if let prevList = paragraph.getPreviousSibling() as? ListNode, prevList.getListType() == listType {
-                    try? prevList.append([listItem])
-                    try? paragraph.remove()
+                switch planned {
+                case .heading(let level, _, _):
+                    _ = try textNode.setText("")
+                    let heading = createHeadingNode(headingTag: level.lexicalType)
+                    _ = try paragraph.replace(replaceWith: heading)
+                    let textAnchor = createTextNode(text: emptyTextCaretAnchor)
+                    try heading.append([textAnchor])
+                    let anchor = Point(key: textAnchor.key, offset: 0, type: .text)
+                    try setSelection(RangeSelection(anchor: anchor, focus: anchor, format: selection.format))
+                    return
 
-                    if let nextList = prevList.getNextSibling() as? ListNode, nextList.getListType() == listType {
-                        try? prevList.append(nextList.getChildren())
-                        try? nextList.remove()
+                case .list(let kind, _, let plannedStart, _):
+                    let listType: ListType = kind == "ordered" ? .number : .bullet
+                    let start: Int = plannedStart ?? 1
+
+                    // Create an empty list item with ZWSP to ensure the bullet/number renders and the caret has a text anchor.
+                    let listItem = ListItemNode()
+                    let zwsp = createTextNode(text: emptyTextCaretAnchor)
+                    try listItem.append([zwsp])
+
+                    func selectZWSP() {
+                        let p = Point(key: zwsp.key, offset: 0, type: .text)
+                        getActiveEditorState()?.selection = RangeSelection(anchor: p, focus: p, format: TextFormat())
                     }
 
-                    try? updateChildrenListItemValue(list: prevList, children: nil)
-                    selectZWSP()
-                } else if let nextList = paragraph.getNextSibling() as? ListNode, nextList.getListType() == listType {
-                    if let first = nextList.getFirstChild() {
-                        _ = try? first.insertBefore(nodeToInsert: listItem)
+                    // Merge with adjacent same-type lists if present; otherwise replace the paragraph with a new list.
+                    if let prevList = paragraph.getPreviousSibling() as? ListNode, prevList.getListType() == listType {
+                        try prevList.append([listItem])
+                        try paragraph.remove()
+
+                        if let nextList = prevList.getNextSibling() as? ListNode, nextList.getListType() == listType {
+                            try prevList.append(nextList.getChildren())
+                            try nextList.remove()
+                        }
+
+                        try updateChildrenListItemValue(list: prevList, children: nil)
+                        selectZWSP()
+                    } else if let nextList = paragraph.getNextSibling() as? ListNode, nextList.getListType() == listType {
+                        if let first = nextList.getFirstChild() {
+                            _ = try first.insertBefore(nodeToInsert: listItem)
+                        } else {
+                            try nextList.append([listItem])
+                        }
+                        try paragraph.remove()
+                        try updateChildrenListItemValue(list: nextList, children: nil)
+                        selectZWSP()
                     } else {
-                        try? nextList.append([listItem])
+                        let list = ListNode(listType: listType, start: start)
+                        try list.append([listItem])
+                        _ = try paragraph.replace(replaceWith: list)
+                        try updateChildrenListItemValue(list: list, children: nil)
+                        selectZWSP()
                     }
-                    try? paragraph.remove()
-                    try? updateChildrenListItemValue(list: nextList, children: nil)
-                    selectZWSP()
-                } else {
-                    let list = ListNode(listType: listType, start: start)
-                    try? list.append([listItem])
-                    _ = try? paragraph.replace(replaceWith: list)
-                    try? updateChildrenListItemValue(list: list, children: nil)
-                    selectZWSP()
                 }
             }
+        } catch {
+            isApplyingUndoRedo = true
+            defer { isApplyingUndoRedo = false }
+            try? lexicalView.editor.setEditorState(beforeEditorState)
+            logger.logSimpleEvent("SHORTCUT_ROLLBACK", details: "Markdown shortcut conversion failed; restored prior state: \(error.localizedDescription)")
+            return false
         }
 
         // Nudge the frontend to update selection rendering immediately.
@@ -1689,7 +1702,6 @@ public final class MarkdownEditorContentView: UIView {
     private struct ReplacementSessionState {
         let token: UUID
         let anchorKey: NodeKey
-        let startedAt: Date
         let beforeEditorState: EditorState
         let originalRawText: String
         let matchStartUtf16: Int
@@ -1701,7 +1713,6 @@ public final class MarkdownEditorContentView: UIView {
 
     private struct AppendSessionState {
         let token: UUID
-        let startedAt: Date
         let beforeEditorState: EditorState
         var appendedMarkdown: String
         var appendedRootNodeKeys: [NodeKey]
@@ -1730,13 +1741,19 @@ public final class MarkdownEditorContentView: UIView {
         }
     }
 
+    /// Applies one streaming replacement delta. Returns false (after restoring
+    /// the pre-delta editor state) if the update throws — Lexical commits
+    /// partial mutations on inner errors, so callers must not advance session
+    /// bookkeeping when this fails.
+    @discardableResult
     private func replaceTextRangeInEditor(
         anchorKey: NodeKey,
         startUtf16: Int,
         lengthUtf16: Int,
         replacementText: String
-    ) {
+    ) -> Bool {
         clearMarkedTextIfNeeded()
+        let beforeDelta = lexicalView.editor.getEditorState().clone(selection: nil)
         do {
             try lexicalView.editor.update {
                 guard let node = getNodeByKey(key: anchorKey) as? ElementNode else { return }
@@ -1784,44 +1801,74 @@ public final class MarkdownEditorContentView: UIView {
                 getActiveEditorState()?.selection = selection
                 try selection.insertRawText(text: replacementText)
 
+                // insertRawText can leave the selection pointing at removed text nodes
+                // when the replaced range consumes them; re-anchor explicitly so the
+                // update always commits with a valid selection (Lexical asserts this).
+                let postNodes = collectTextNodes(from: node)
+                if let lastPost = postNodes.last {
+                    var remaining = start + (replacementText as NSString).length
+                    var target: (node: TextNode, offset: Int) = (lastPost, lastPost.getTextContentSize())
+                    for tn in postNodes {
+                        let len = tn.getTextContentSize()
+                        if remaining <= len {
+                            target = (tn, remaining)
+                            break
+                        }
+                        remaining -= len
+                    }
+                    let caret = Point(key: target.node.key, offset: target.offset, type: .text)
+                    getActiveEditorState()?.selection = RangeSelection(anchor: caret, focus: caret, format: TextFormat())
+                } else {
+                    let caret = Point(key: node.key, offset: 0, type: .element)
+                    getActiveEditorState()?.selection = RangeSelection(anchor: caret, focus: caret, format: TextFormat())
+                }
+
                 // Preserve Lexical's invariants for “empty” blocks that must remain selectable/editable.
                 if (node is ListItemNode || node is CodeNode), node.getTextContent().isEmpty {
                     for child in node.getChildren() {
-                        try? child.remove()
+                        try child.remove()
                     }
                     let zwsp = TextNode(text: emptyTextCaretAnchor)
-                    try? node.append([zwsp])
+                    try node.append([zwsp])
                     let p = Point(key: zwsp.key, offset: zwsp.getTextContentSize(), type: .text)
                     getActiveEditorState()?.selection = RangeSelection(anchor: p, focus: p, format: TextFormat())
                 }
             }
         } catch {
-            // Best-effort; failures should not crash.
+            isApplyingUndoRedo = true
+            defer { isApplyingUndoRedo = false }
+            try? lexicalView.editor.setEditorState(beforeDelta)
+            logger.logSimpleEvent("STREAMING_ROLLBACK", details: "Replacement delta failed; restored prior state: \(error.localizedDescription)")
+            return false
         }
+        return true
     }
 
-    private func setAppendMarkdownInEditor(_ markdown: String) {
+    /// Re-renders the append session's accumulated markdown. Returns false
+    /// (after restoring the pre-delta editor state) if the update throws;
+    /// session bookkeeping is committed by the caller only on success.
+    private func setAppendMarkdownInEditor(_ markdown: String) -> Bool {
         clearMarkedTextIfNeeded()
+        guard let state = appendSessionState else { return false }
+
+        let beforeDelta = lexicalView.editor.getEditorState().clone(selection: nil)
+        var newKeys: [NodeKey] = []
         do {
             try lexicalView.editor.update {
                 guard let root = getRoot() else { return }
-                guard var state = appendSessionState else { return }
 
                 // Remove any previously appended top-level nodes.
                 for key in state.appendedRootNodeKeys {
                     if let node = getNodeByKey(key: key) {
-                        try? node.remove()
+                        try node.remove()
                     }
                 }
 
                 let nodesToAppend = MarkdownImporter.makeNodes(from: markdown)
                 if !nodesToAppend.isEmpty {
-                    try? root.append(nodesToAppend)
+                    try root.append(nodesToAppend)
                 }
-
-                state.appendedMarkdown = markdown
-                state.appendedRootNodeKeys = nodesToAppend.map(\.key)
-                appendSessionState = state
+                newKeys = nodesToAppend.map(\.key)
 
                 // Move caret to end of appended content (best-effort).
                 if let last = nodesToAppend.last {
@@ -1835,8 +1882,18 @@ public final class MarkdownEditorContentView: UIView {
                 }
             }
         } catch {
-            // Best-effort; failures should not crash.
+            isApplyingUndoRedo = true
+            defer { isApplyingUndoRedo = false }
+            try? lexicalView.editor.setEditorState(beforeDelta)
+            logger.logSimpleEvent("STREAMING_ROLLBACK", details: "Append delta failed; restored prior state: \(error.localizedDescription)")
+            return false
         }
+
+        var committed = state
+        committed.appendedMarkdown = markdown
+        committed.appendedRootNodeKeys = newKeys
+        appendSessionState = committed
+        return true
     }
 }
 
@@ -1928,12 +1985,10 @@ extension MarkdownEditorContentView: MarkdownStreamingEditing, MarkdownStreaming
         )
 
         let token = UUID()
-        let startedAt = Date()
         let beforeEditorState = lexicalView.editor.getEditorState().clone(selection: nil)
         replacementSessionState = ReplacementSessionState(
             token: token,
             anchorKey: match.nodeKey,
-            startedAt: startedAt,
             beforeEditorState: beforeEditorState,
             originalRawText: match.rawText,
             matchStartUtf16: match.matchStartUtf16,
@@ -1945,12 +2000,17 @@ extension MarkdownEditorContentView: MarkdownStreamingEditing, MarkdownStreaming
 
         applyEffectiveEditability()
         // Remove the matched range immediately so the user sees “editing in progress”.
-        replaceTextRangeInEditor(
+        // A session never activates over a failed mutation.
+        guard replaceTextRangeInEditor(
             anchorKey: match.nodeKey,
             startUtf16: match.matchStartUtf16,
             lengthUtf16: match.matchLengthUtf16,
             replacementText: ""
-        )
+        ) else {
+            replacementSessionState = nil
+            applyEffectiveEditability()
+            throw StreamingReplacementError.applyFailed
+        }
 
         return ReplacementSession(owner: self, token: token)
     }
@@ -1961,11 +2021,9 @@ extension MarkdownEditorContentView: MarkdownStreamingEditing, MarkdownStreaming
         }
 
         let token = UUID()
-        let startedAt = Date()
         let beforeEditorState = lexicalView.editor.getEditorState().clone(selection: nil)
         appendSessionState = AppendSessionState(
             token: token,
-            startedAt: startedAt,
             beforeEditorState: beforeEditorState,
             appendedMarkdown: "",
             appendedRootNodeKeys: []
@@ -1985,13 +2043,16 @@ extension MarkdownEditorContentView: MarkdownStreamingEditing, MarkdownStreaming
         let oldLength = state.replacementLengthUtf16
         state.replacementText += delta
         state.replacementLengthUtf16 = (state.replacementText as NSString).length
-        replacementSessionState = state
-        replaceTextRangeInEditor(
+        // Commit session bookkeeping only after a successful apply, so a failed
+        // delta does not desync the next delta's replacement range.
+        if replaceTextRangeInEditor(
             anchorKey: state.anchorKey,
             startUtf16: state.matchStartUtf16,
             lengthUtf16: oldLength,
             replacementText: state.replacementText
-        )
+        ) {
+            replacementSessionState = state
+        }
     }
 
     internal func setReplacementText(token: UUID, fullText: String) {
@@ -1999,13 +2060,14 @@ extension MarkdownEditorContentView: MarkdownStreamingEditing, MarkdownStreaming
         let oldLength = state.replacementLengthUtf16
         state.replacementText = fullText
         state.replacementLengthUtf16 = (state.replacementText as NSString).length
-        replacementSessionState = state
-        replaceTextRangeInEditor(
+        if replaceTextRangeInEditor(
             anchorKey: state.anchorKey,
             startUtf16: state.matchStartUtf16,
             lengthUtf16: oldLength,
             replacementText: state.replacementText
-        )
+        ) {
+            replacementSessionState = state
+        }
     }
 
     internal func finishReplacement(token: UUID) {
@@ -2050,18 +2112,15 @@ extension MarkdownEditorContentView: MarkdownStreamingEditing, MarkdownStreaming
     }
 
     internal func appendAppendDelta(token: UUID, delta: String) {
-        guard var state = appendSessionState, state.token == token else { return }
+        guard let state = appendSessionState, state.token == token else { return }
         guard !delta.isEmpty else { return }
-        state.appendedMarkdown += delta
-        appendSessionState = state
-        setAppendMarkdownInEditor(state.appendedMarkdown)
+        // setAppendMarkdownInEditor commits the session bookkeeping on success.
+        _ = setAppendMarkdownInEditor(state.appendedMarkdown + delta)
     }
 
     internal func setAppendText(token: UUID, fullText: String) {
-        guard var state = appendSessionState, state.token == token else { return }
-        state.appendedMarkdown = fullText
-        appendSessionState = state
-        setAppendMarkdownInEditor(state.appendedMarkdown)
+        guard appendSessionState?.token == token else { return }
+        _ = setAppendMarkdownInEditor(fullText)
     }
 
     internal func finishAppend(token: UUID) {

@@ -9,6 +9,7 @@ public enum StreamingReplacementError: LocalizedError, Equatable {
     case matchNotFound
     case editorUnavailable
     case invalidMatchRange
+    case applyFailed
 
     public var errorDescription: String? {
         switch self {
@@ -22,12 +23,20 @@ public enum StreamingReplacementError: LocalizedError, Equatable {
             return "Editor is unavailable."
         case .invalidMatchRange:
             return "The matching text range was invalid."
+        case .applyFailed:
+            return "Failed to apply the replacement to the editor."
         }
     }
 }
 
 @MainActor
 public protocol MarkdownStreamingEditing: AnyObject {
+    /// Starts a streaming replacement session over the best match for `findText`.
+    ///
+    /// The editor stays read-only until `finish()` or `cancel()` is called on the
+    /// returned session. Callers own the session lifetime and must call one of
+    /// them on every exit path — including stream failure — or the editor remains
+    /// locked.
     func startReplacement(
         findText: String,
         beforeContext: String?,
@@ -35,6 +44,9 @@ public protocol MarkdownStreamingEditing: AnyObject {
     ) throws -> ReplacementSession
 }
 
+/// Handle for one streaming replacement. The owning editor is read-only while
+/// the session is active; always end it with `finish()` (keep the streamed
+/// content, one undo step) or `cancel()` (restore the original document).
 @MainActor
 public final class ReplacementSession {
     private weak var owner: MarkdownStreamingEditingInternal?
@@ -68,9 +80,18 @@ public final class ReplacementSession {
 
 @MainActor
 public protocol MarkdownStreamingAppending: AnyObject {
+    /// Starts a streaming append session at the end of the document.
+    ///
+    /// The editor stays read-only until `finish()` or `cancel()` is called on the
+    /// returned session. Callers own the session lifetime and must call one of
+    /// them on every exit path — including stream failure — or the editor remains
+    /// locked.
     func startAppend() throws -> AppendSession
 }
 
+/// Handle for one streaming append. The owning editor is read-only while the
+/// session is active; always end it with `finish()` (keep the streamed content,
+/// one undo step) or `cancel()` (restore the original document).
 @MainActor
 public final class AppendSession {
     private weak var owner: MarkdownStreamingAppendingInternal?

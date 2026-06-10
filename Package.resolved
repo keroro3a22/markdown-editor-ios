@@ -5,7 +5,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/jcfontecha/lexical-ios.git",
       "state" : {
-        "revision" : "a78e6717b3b329e6b2d5a2c92ee40c22882037bd"
+        "revision" : "1ac66f000fcb4cdbd508ba3b6c18ff67b748dd49"
       }
     },
     {
@@ -31,8 +31,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/scinfu/SwiftSoup.git",
       "state" : {
-        "revision" : "6c7915e16f729857aec3e99068c361e58a00ed68",
-        "version" : "2.13.4"
+        "revision" : "49dcadd93161f4a44b4994d3a3e8de9f085aface",
+        "version" : "2.13.5"
       }
     }
   ],
