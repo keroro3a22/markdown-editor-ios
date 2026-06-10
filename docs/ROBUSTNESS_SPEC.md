@@ -1,7 +1,10 @@
 # MarkdownEditor Robustness Spec
 
 ## Status
-- Draft (actively implementing first stabilization pass)
+- Historical (June 2026): the domain layer this spec describes was removed in the
+  hardening refactor — Lexical is the single source of truth and the
+  domain/Lexical drift sections below are resolved by deletion. Kept for the
+  reliability goals and reproducibility guidance, which still apply.
 
 ## Problem Statement
 The repository currently feels “flaky” because build/test execution is not consistently reproducible across environments, and runtime/editor behavior can vary depending on timing and state drift between the domain layer and Lexical.

@@ -13,4 +13,4 @@
 ## Architecture and design references
 
 - `ARCHITECTURE.md`
-- `DOMAIN_LAYER_IMPLEMENTATION.md`
+- [architecture-fragility-investigation.md](architecture-fragility-investigation.md): point-in-time analysis of the editor's architectural risk profile and hardening priorities

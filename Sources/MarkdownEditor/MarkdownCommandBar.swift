@@ -412,10 +412,14 @@ private struct UIKitCommandBarButton: UIViewRepresentable {
             button.contentVerticalAlignment = .center
 
         case .title(let title):
-            button.setTitle(title, for: .normal)
-            button.setTitleColor(.label, for: .normal)
-            button.titleLabel?.font = .systemFont(ofSize: 15, weight: .medium)
-            button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 14, bottom: 0, right: 14)
+            var configuration = UIButton.Configuration.plain()
+            configuration.attributedTitle = AttributedString(
+                title,
+                attributes: AttributeContainer([.font: UIFont.systemFont(ofSize: 15, weight: .medium)])
+            )
+            configuration.baseForegroundColor = .label
+            configuration.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 14, bottom: 0, trailing: 14)
+            button.configuration = configuration
         }
 
         return button
@@ -517,9 +521,10 @@ final class MarkdownCommandBarInputView: UIInputView {
 
     init(content: CommandBarContent = .default) {
         self.commandBar = MarkdownCommandBar(content: content)
-        let screenWidth = UIScreen.main.bounds.width
+        // UIKit sizes input accessory views to the keyboard width; the initial
+        // frame width is irrelevant (and UIScreen.main is deprecated for it).
         super.init(
-            frame: CGRect(x: 0, y: 0, width: screenWidth, height: Self.preferredHeight),
+            frame: CGRect(x: 0, y: 0, width: 0, height: Self.preferredHeight),
             inputViewStyle: .keyboard
         )
         setupContent()
@@ -566,10 +571,7 @@ final class MarkdownCommandBarInputView: UIInputView {
     private func updateScrollEdgeInteraction() {
         guard #available(iOS 26.0, *) else { return }
 
-        let existingInteractions = interactions.filter {
-            String(describing: type(of: $0)) == "UIScrollEdgeElementContainerInteraction"
-        }
-        for interaction in existingInteractions {
+        for interaction in interactions where interaction is UIScrollEdgeElementContainerInteraction {
             removeInteraction(interaction)
         }
 

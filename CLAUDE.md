@@ -2,7 +2,7 @@
 
 ## Repository Overview
 
-This is a Swift package that provides a rich markdown editor for iOS, built on top of Meta's Lexical framework. The editor combines a proven UI framework (Lexical) with a clean domain layer for testing and validation.
+This is a Swift package that provides a rich markdown editor for iOS, built on a hard fork of Meta's Lexical framework. Lexical's editor state is the single source of truth; the package layers markdown import/export, editing behavior, streaming AI editing, undo/redo, and theming on top. See `ARCHITECTURE.md` for the full picture.
 
 ## Architecture
 
@@ -11,188 +11,102 @@ This is a Swift package that provides a rich markdown editor for iOS, built on t
 1. **Lexical Foundation** (Primary)
    - **LexicalView**: The main text editing component
    - **Lexical Editor**: Handles all real-time editing operations
-   - **Lexical Plugins**: Lists, links, markdown import/export
-   - **Command System**: Lexical's proven command pattern for operations
+   - **Lexical Plugins**: Lists, links, markdown export
+   - **Hard fork**: `jcfontecha/lexical-ios`, pinned by exact revision in `Package.swift` — we modify it freely (caret geometry, reconciler selection handling, the canonical ZWSP anchor API, list/theme styling)
 
-2. **Domain Layer** (Testing/Validation)
-   - **MarkdownEditorState**: Pure domain model of editor state
-   - **MarkdownInputEventProcessor**: Simulate input sequences for testing
-   - **MarkdownDocumentService**: Parse/validate markdown content
-   - **MarkdownFormattingService**: Business rules for formatting operations
-   - **Command Pattern**: Domain commands with undo/redo support
+2. **Editor Layer** (this package)
+   - **MarkdownEditorView / MarkdownEditorContentView**: Main editor component (UIKit)
+   - **MarkdownLexicalBridge** (internal): formatting (with business-rule guards), block-type toggling, smart backspace, selection-scoped state reads, markdown export
+   - **MarkdownImporter**: markdown → Lexical nodes (import and paste)
+   - **Streaming sessions**: `startReplacement` / `startAppend` for AI editing; editor is read-only until `finish()`/`cancel()`
+   - **Snapshot undo/redo**: cloned `EditorState` stacks with markdown-fingerprint grouping
 
 3. **UI Layer**
-   - **MarkdownEditorView**: Main editor component (UIKit)
    - **SwiftUIMarkdownEditor**: SwiftUI wrapper
-   - **MarkdownCommandBar**: FluentUI-based formatting toolbar
-   - **MarkdownCursorDelegate**: Custom cursor height handling
+   - **MarkdownCommandBar**: keyboard accessory toolbar (iOS 26 glass + scroll-edge effects)
+   - **MarkdownAccessoryCoordinator**: keyboard inset coordination
 
 ### Design Philosophy
 
 - **Lexical-First**: Lexical remains the single source of truth for all editing operations
-- **Lexical Fork Control**: We use a local fork of Lexical that we can modify/extend as needed for our requirements
-- **Domain as Testing Layer**: Domain layer provides unit-testable business logic without UI dependencies  
-- **Zero Regressions**: Domain integration is additive and doesn't modify existing behavior
-- **Clean Separation**: UI concerns handled by Lexical, business logic testable via domain layer
+- **Hard fork control**: the Lexical fork is ours; root-cause fixes go there, not in package-side workarounds
+- **One canonical ZWSP API**: every "is this block visibly empty?" decision goes through the fork's public `emptyText*` helpers — never a local scalar set
+- **Rollback over partial state**: compound mutations snapshot the editor state and restore it on failure; failures are loud, never silently degraded
+- **Tests exercise the real editor**: there is no simulation layer; geometry expectations derive from the theme, never literals
 
 ## Build & Test Workflow
 
 ### Prerequisites
-- Xcode 15.5+
-- iOS 16.0+ target
-- **Local Lexical fork** at `/Users/juan/Developer/lexical-ios` (we can modify this as needed)
+- Xcode 26+
+- iOS 17.0+ target
+- Lexical fork checkout at `/Users/juan/Developer/lexical-ios` for fork work (the package builds from the pinned remote revision; see `docs/BUILDING.md` for the bump/local-override workflow)
 
 ### Building
 
 ```bash
 # Use Xcode workspace (recommended)
-xcodebuild -workspace .swiftpm/xcode/package.xcworkspace -scheme MarkdownEditor -destination 'platform=iOS Simulator,name=iPhone 16' build
-
-# Alternative: Swift Package Manager (may have platform compatibility issues)
-swift build --target MarkdownEditor
+xcodebuild -workspace .swiftpm/xcode/package.xcworkspace -scheme MarkdownEditor -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build
 ```
 
 ### Testing
 
 ```bash
 # Run all tests
-xcodebuild -workspace .swiftpm/xcode/package.xcworkspace -scheme MarkdownEditor -destination 'platform=iOS Simulator,name=iPhone 16' test
-
-# Note: Some existing tests may fail due to pre-existing issues unrelated to domain integration
+xcodebuild -workspace .swiftpm/xcode/package.xcworkspace -scheme MarkdownEditor -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
 ```
 
 ### Key Test Categories
 
-1. **Domain Layer Tests** (`MarkdownEditorTests.swift`)
-   - Input simulation and validation
-   - Business rule testing
-   - State reflection accuracy
-   - Performance validation
+1. **Runtime behavior suites** (`Tests/MarkdownEditorTests/Runtime/`, on the shared `MarkdownRuntimeTestCase` base)
+   - `CaretGeometryContractTests` — caret contracts with regression history (height/centering, wrapped lines, Enter jitter)
+   - `BlockCanonicalizationTests` — equivalent histories converge; export/import + undo/redo round-trips
+   - `ListEnterExitBehaviorTests` — list enter/exit/backspace, generated marker matrices
+   - `ShortcutPasteAndPlaceholderTests` — markdown shortcuts, paste parsing, placeholder tracking
+   - `SelectionRobustnessTests` — backspace crash matrix, autocorrect replacement, marked text
 
-2. **Integration Tests** (`MarkdownEditorDomainTests`)
-   - Domain ↔ Lexical integration
-   - Complex editing scenarios
-   - Error recovery patterns
+2. **Contract tests**
+   - `MarkdownRegressionMatrixTests` — node types, round-trips, ZWSP-leak checks
+   - `MarkdownFormattingGuardrailTests` — the three formatting business rules on the live editor
+   - `StreamingReplacementTests` / `StreamingAppendTests` / `UndoRedoTests`
 
-3. **UI Tests** (`MarkdownEditorXCTestExamples`)
-   - Comprehensive editing operations
-   - Markdown parsing/rendering
-   - Selection and navigation
-
-## Development Patterns
-
-### Testing Complex Scenarios
-
-```swift
-// Example: Test complex editing sequence without UI
-let editor = MarkdownEditorView()
-let testable = editor as MarkdownEditorTestable
-
-let events: [InputEvent] = [
-    .keystroke(character: "#", modifiers: []),
-    .keystroke(character: " ", modifiers: []),
-    .keystroke(character: "H", modifiers: []),
-    .enter,
-    .keystroke(character: "b", modifiers: [.command]) // Bold shortcut
-]
-
-let result = testable.simulateInputEvents(events)
-let validation = testable.validateDocument()
-```
-
-### Domain State Inspection
-
-```swift
-// Get current editor state as domain model
-let domainState = testable.getDomainState()
-print("Content: \(domainState.content)")
-print("Block type: \(domainState.currentBlockType)")
-print("Formatting: \(domainState.currentFormatting)")
-```
-
-### Operation Validation
-
-```swift
-// Validate operations before execution
-let result = testable.validateOperation {
-    editor.applyFormatting([.bold])
-    editor.setBlockType(.heading(level: .h1))
-}
-```
+3. **Caret regression files**
+   - `MarkdownEditorWrappedLineCaretTests`, `MarkdownEditorEnterPolishRegressionTests` — pinned against TextKit's glyph-position oracle
 
 ## Dependencies
 
-- **Lexical**: **Local fork** at `/Users/juan/Developer/lexical-ios` (we control this and can modify as needed)
-- **FluentUI**: Microsoft's design system (`0.34.2`)
-- **swift-markdown**: Apple's markdown parsing (`main` branch)
-- **SwiftSoup**: HTML parsing for Lexical (`2.8.8`)
+- **Lexical**: hard fork `jcfontecha/lexical-ios`, pinned by revision (tagged `0.x.y`)
+- **swift-markdown**: Apple's markdown parsing (transitively via the fork)
+- **SwiftSoup**: HTML parsing for Lexical plugins
 
 ## File Structure
 
 ```
 Sources/MarkdownEditor/
-├── MarkdownEditor.swift              # Main editor component + testable interface
+├── MarkdownEditor.swift              # MarkdownEditorView + ContentView, input handling, undo, streaming
+├── MarkdownLexicalBridge.swift       # Internal operations bridge (formatting/block-type/backspace/export)
 ├── SwiftUIMarkdownEditor.swift       # SwiftUI wrapper
-├── MarkdownConfiguration.swift       # Configuration types
-├── MarkdownCommandBar.swift          # FluentUI toolbar
-├── MarkdownCursorDelegate.swift      # Custom cursor handling
-├── MarkdownDocument.swift            # Document model
-├── MarkdownImporter.swift            # Lexical markdown import
-├── ZeroWidthSpaceFixPlugin.swift     # List editing fix
-└── Domain/
-    ├── MarkdownDomainModels.swift        # Core domain types
-    ├── MarkdownStateService.swift       # State management service
-    ├── MarkdownDocumentService.swift    # Document operations
-    ├── MarkdownFormattingService.swift  # Formatting business logic
-    ├── MarkdownCommands.swift           # Command pattern implementation
-    └── MarkdownInputEventProcessor.swift # Input simulation
+├── MarkdownConfiguration.swift       # Configuration + public API types
+├── MarkdownTheme.swift               # Typography/colors/spacing themes
+├── MarkdownCommandBar.swift          # Keyboard accessory toolbar
+├── MarkdownAccessoryCoordinator.swift# Keyboard inset coordination
+├── MarkdownCursorDelegate.swift      # Cursor customization hook
+├── MarkdownDocument.swift            # Document model + metadata
+├── MarkdownImporter.swift            # Markdown → Lexical nodes
+├── StreamingReplacementEditing.swift # Streaming session API + fuzzy matching
+├── StreamingTextSmoother.swift       # Streaming display pacing
+├── MarkdownCommandLogger.swift       # Structured operation logging
+├── MarkdownLogger.swift              # Logging plumbing
+└── ZeroWidthSpaceFixPlugin.swift     # List editing fix plugin
 
 Tests/MarkdownEditorTests/
-├── MarkdownEditorTests.swift         # Main test suite with domain examples
-├── Domain/
-│   ├── MarkdownDomainTests.swift     # Pure domain tests
-│   ├── MarkdownInputEventTests.swift # Input simulation tests
-│   └── MarkdownStateTransitionTests.swift # State transition tests
-└── Testing Infrastructure/           # Comprehensive testing framework
+├── Runtime/                          # Runtime behavior suites + RuntimeTestSupport base
+├── MarkdownRegressionMatrixTests.swift
+├── MarkdownFormattingGuardrailTests.swift
+├── Streaming*/UndoRedo/WrappedLineCaret/EnterPolish tests
+└── MarkdownTestHelpers.swift         # Scenario DSL base (MarkdownTestCase)
 ```
 
-## Key Integration Points
+## Maintenance Notes
 
-### MarkdownEditorTestable Protocol
-
-The main interface for accessing domain testing capabilities:
-
-- `simulateTyping(_:)` - Test typing sequences
-- `simulateInputEvents(_:)` - Test complex input patterns  
-- `getDomainState()` - Get current state as domain model
-- `validateDocument()` - Validate current content
-- `validateOperation(_:)` - Validate operations before execution
-
-### Domain ↔ Lexical Bridge
-
-The integration maintains Lexical as the authoritative source while providing domain layer access:
-
-1. **State Reflection**: Domain state reflects current Lexical state
-2. **Input Simulation**: Domain events can trigger Lexical operations  
-3. **Validation**: Domain rules validate before Lexical execution
-4. **Testing**: Complex scenarios testable without UI dependencies
-
-## Performance Considerations
-
-- Domain layer adds minimal runtime overhead
-- State reflection only occurs when explicitly requested
-- Input simulation is for testing only, not production paths
-- Validation is optional and can be disabled in production
-
-## Future Enhancements
-
-- Extend input simulation to cover more Lexical operations
-- Add domain-level undo/redo as supplement to Lexical undo
-- Enhanced business rule validation
-- Performance metrics collection through domain layer
-- Advanced testing patterns for complex document scenarios
-- **Lexical Fork Modifications**: Since we control the Lexical fork, we can:
-  - Add custom node types for specialized markdown elements
-  - Extend command system for domain-specific operations
-  - Optimize performance for our specific use cases
-  - Add hooks for better domain layer integration
+- **Fork bumps**: commit + tag in `../lexical-ios`, push with tags, update the `revision:` in `Package.swift`, re-resolve both `Package.resolved` files (root and Demo). See `docs/BUILDING.md`.
+- Some geometry tests may fail on simulator/OS combinations the suite wasn't tuned for; compare against the current baseline before attributing failures to a change.

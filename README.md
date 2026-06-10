@@ -13,7 +13,7 @@ An iOS-focused WYSIWYG markdown editor built on [Lexical-iOS](https://github.com
 - `MarkdownEditorView` (UIKit)
 - `MarkdownEditor` (SwiftUI)
 
-The package uses a domain layer for structured state operations and delegates rich-text rendering/mutations to Lexical.
+Lexical is the single source of truth; a thin internal bridge owns formatting, block-type, smart-backspace, and export operations on top of it.
 
 ## Key Features
 
@@ -245,7 +245,7 @@ MarkdownEditor/
 │       ├── MarkdownLogger.swift
 │       ├── ZeroWidthSpaceFixPlugin.swift
 │       ├── SwiftUIMarkdownEditor.swift  # SwiftUI wrapper
-│       └── Domain/                      # Domain service and command layer
+│       └── MarkdownLexicalBridge.swift  # Internal operations bridge
 ├── Tests/
 │   └── MarkdownEditorTests/
 └── Demo/
