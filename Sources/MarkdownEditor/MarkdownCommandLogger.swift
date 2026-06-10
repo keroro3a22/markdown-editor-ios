@@ -19,17 +19,16 @@ public class MarkdownCommandLogger {
         self.loggingConfig = loggingConfig
     }
     
-    // MARK: - Command Logging
-    
-    /// Log the start of a command execution with before state
-    public func logCommandStart(_ command: MarkdownCommand, beforeState: MarkdownStateSnapshot) {
+    // MARK: - Operation Logging
+
+    /// Log the start of an editor operation with before state
+    public func logOperationStart(_ name: String, beforeState: MarkdownStateSnapshot) {
         guard loggingConfig.isEnabled && loggingConfig.level >= .debug else { return }
-        
+
         let separator = String(repeating: "=", count: 42)
-        let commandName = extractCommandName(from: command)
-        
+
         MarkdownLogger.command(
-            "\n\(separator) COMMAND: \(commandName) \(separator)",
+            "\n\(separator) COMMAND: \(name) \(separator)",
             level: .debug,
             config: loggingConfig
         )
@@ -39,30 +38,29 @@ public class MarkdownCommandLogger {
             MarkdownLogger.command("BEFORE: \(beforeState)", level: .debug, config: loggingConfig)
         }
     }
-    
-    /// Log the command action being taken
-    public func logCommandAction(_ command: MarkdownCommand) {
+
+    /// Log the operation action being taken
+    public func logOperationAction(_ action: String) {
         guard loggingConfig.isEnabled && loggingConfig.level >= .debug else { return }
-        
-        let action = extractCommandAction(from: command)
+
         MarkdownLogger.command("ACTION: \(action)", level: .debug, config: loggingConfig)
     }
-    
-    /// Log the command completion with after state
-    public func logCommandComplete(_ command: MarkdownCommand, afterState: MarkdownStateSnapshot, success: Bool) {
+
+    /// Log the operation completion with after state
+    public func logOperationComplete(_ name: String, afterState: MarkdownStateSnapshot?, success: Bool) {
         guard loggingConfig.isEnabled && loggingConfig.level >= .debug else { return }
-        
-        if success {
+
+        if success, let afterState {
             if loggingConfig.includeDetailedState {
                 MarkdownLogger.command("AFTER STATE:", level: .debug, config: loggingConfig)
                 MarkdownLogger.command(afterState.detailedDescription, level: .debug, config: loggingConfig)
             } else {
                 MarkdownLogger.command("AFTER:  \(afterState)", level: .debug, config: loggingConfig)
             }
-        } else {
+        } else if !success {
             MarkdownLogger.command("FAILED: Command did not execute successfully", level: .error, config: loggingConfig)
         }
-        
+
         let separator = String(repeating: "=", count: 100)
         MarkdownLogger.command("\(separator)\n", level: .debug, config: loggingConfig)
     }
@@ -106,52 +104,8 @@ public class MarkdownCommandLogger {
         }
     }
     
-    /// Create a snapshot from domain state
-    public func createSnapshot(from state: MarkdownEditorState) -> MarkdownStateSnapshot {
-        let content = extractContentPreview(from: state.content)
-        let selectionDesc = "\(state.selection.start.offset)"
-        if state.selection.start != state.selection.end {
-            let endOffset = state.selection.end.offset
-            return MarkdownStateSnapshot(
-                content: content,
-                blockType: describeBlockType(state.currentBlockType),
-                selection: "\(state.selection.start.offset)-\(endOffset)",
-                nodeStructure: nil // Domain state doesn't have node structure
-            )
-        }
-        
-        return MarkdownStateSnapshot(
-            content: content,
-            blockType: describeBlockType(state.currentBlockType),
-            selection: selectionDesc,
-            nodeStructure: nil // Domain state doesn't have node structure
-        )
-    }
-    
     // MARK: - Private Helpers
-    
-    private func extractCommandName(from command: MarkdownCommand) -> String {
-        switch command {
-        case is SetBlockTypeCommand: return "Toggle Block Type"
-        case is SmartBackspaceCommand: return "Smart Backspace"
-        case is ApplyFormattingCommand: return "Apply Formatting"
-        default: return "Unknown Command"
-        }
-    }
-    
-    private func extractCommandAction(from command: MarkdownCommand) -> String {
-        switch command {
-        case let cmd as SetBlockTypeCommand:
-            return "SetBlockType(\(cmd.blockType))"
-        case let cmd as SmartBackspaceCommand:
-            return "SmartBackspace(at: \(cmd.position.offset))"
-        case let cmd as ApplyFormattingCommand:
-            return "ApplyFormatting(\(cmd.formatting))"
-        default:
-            return command.description
-        }
-    }
-    
+
     private func extractContent(from editor: Editor) -> String {
         guard let root = getRoot() else {
             return ""
@@ -349,27 +303,3 @@ public struct MarkdownStateSnapshot: CustomStringConvertible {
     }
 }
 
-// MARK: - Shared Logger Instance
-
-// Global logger instance removed - logger is now created per editor instance
-
-// MARK: - Helpers
-
-private func describeBlockType(_ blockType: MarkdownBlockType) -> String {
-    switch blockType {
-    case .paragraph: return "paragraph"
-    case .heading(let level):
-        switch level {
-        case .h1: return "h1"
-        case .h2: return "h2"
-        case .h3: return "h3"
-        case .h4: return "h4"
-        case .h5: return "h5"
-        case .h6: return "h6"
-        }
-    case .codeBlock: return "code"
-    case .quote: return "quote"
-    case .unorderedList: return "list"
-    case .orderedList: return "list"
-    }
-}

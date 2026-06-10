@@ -65,8 +65,8 @@ public final class MarkdownEditorContentView: UIView {
     private weak var controller: AnyObject?
     private var cursorDelegate: MarkdownCursorDelegate?
     
-    // Domain layer bridge
-    private let domainBridge: MarkdownDomainBridge
+    // Lexical-facing operations bridge
+    private let bridge: MarkdownLexicalBridge
     
     // Command handlers for cleanup
     private var commandHandlers: [Editor.RemovalHandler] = []
@@ -109,8 +109,7 @@ public final class MarkdownEditorContentView: UIView {
         // Initialize logger with configuration
         self.logger = MarkdownCommandLogger(loggingConfig: configuration.logging)
         
-        // Initialize Domain Bridge
-        self.domainBridge = MarkdownDomainBridge(logger: logger)
+        self.bridge = MarkdownLexicalBridge(logger: logger)
         
         // Initialize Lexical components
         let theme = Self.createLexicalTheme(from: configuration.theme)
@@ -125,8 +124,7 @@ public final class MarkdownEditorContentView: UIView {
         super.init(frame: .zero)
         setupContentView()
         
-        // Connect domain bridge to Lexical editor
-        domainBridge.connect(to: lexicalView.editor)
+        bridge.connect(to: lexicalView.editor)
         canonicalizeSingleEmptyRootBlockIfNeeded()
         syncNativeSelectionToLexicalSelection()
         lastHistoryMarkdown = exportMarkdownForHistory()
@@ -201,7 +199,6 @@ public final class MarkdownEditorContentView: UIView {
 
         do {
             try MarkdownImporter.importMarkdown(document.content, into: lexicalView.editor)
-            domainBridge.syncFromLexical()
         } catch {
             return .failure(.invalidMarkdown(error.localizedDescription))
         }
@@ -225,9 +222,6 @@ public final class MarkdownEditorContentView: UIView {
                         setBlocksType(selection: selection) { createHeadingNode(headingTag: .h1) }
                     }
                 }
-
-                // Sync domain bridge state after applying the formatting
-                domainBridge.syncFromLexical()
             } catch {
                 // Silently handle the error for now - startWithTitle is a nice-to-have feature
             }
@@ -256,56 +250,23 @@ public final class MarkdownEditorContentView: UIView {
             return .success(cachedExportDocument)
         }
 
-        // Export through domain bridge
-        let result = domainBridge.exportDocument()
-        
-        switch result {
+        switch bridge.exportDocument() {
         case .success(let document):
             cachedExportDocument = document
             cachedExportIsDirty = false
             return .success(document)
         case .failure(let error):
-            // Map domain error to editor error
-            switch error {
-            case .serializationFailed:
-                return .failure(.serializationFailed)
-            default:
-                return .failure(.editorStateCorrupted)
-            }
+            return .failure(error)
         }
     }
     
     public func applyFormatting(_ formatting: InlineFormatting) {
-        // Sync current state from Lexical
-        domainBridge.syncFromLexical()
-        
-        // Create domain command
-        let command = domainBridge.createFormattingCommand(formatting)
-        
-        // Execute through domain bridge (validates and applies)
-        let result = domainBridge.execute(command)
-        
-        switch result {
-        case .success:
-            // Success - state is already updated in Lexical
-            break
-        case .failure(let error):
-            // Map domain error to editor error
-            let editorError: MarkdownEditorError
-            switch error {
-            case .unsupportedOperation(let reason):
-                editorError = .unsupportedFeature(reason)
-            default:
-                editorError = .editorStateCorrupted
-            }
-            delegate?.markdownEditor(self, didEncounterError: editorError)
+        if case .failure(let error) = bridge.applyFormatting(formatting) {
+            delegate?.markdownEditor(self, didEncounterError: error)
         }
     }
     
     public func setBlockType(_ blockType: MarkdownBlockType) {
-        // Sync current state from Lexical
-        domainBridge.syncFromLexical()
-
         if transformSelectedEmptyBlock(to: blockType) {
             updatePlaceholder()
             syncNativeSelectionToLexicalSelection()
@@ -320,13 +281,7 @@ public final class MarkdownEditorContentView: UIView {
             }
         }
         
-        // Create domain command with smart list toggle logic
-        let command = domainBridge.createBlockTypeCommand(blockType)
-        
-        // Execute through domain bridge
-        let result = domainBridge.execute(command)
-        
-        switch result {
+        switch bridge.setBlockType(blockType) {
         case .success:
             updatePlaceholder()
 
@@ -356,34 +311,16 @@ public final class MarkdownEditorContentView: UIView {
             syncNativeSelectionToLexicalSelection()
         case .failure(let error):
             logger.logSimpleEvent("ERROR", details: "Block type command failed: \(error.localizedDescription)")
-            // Map domain error to editor error
-            let editorError: MarkdownEditorError
-            switch error {
-            case .unsupportedOperation(let reason):
-                editorError = .unsupportedFeature(reason)
-            default:
-                editorError = .editorStateCorrupted
-            }
-            delegate?.markdownEditor(self, didEncounterError: editorError)
+            delegate?.markdownEditor(self, didEncounterError: error)
         }
     }
-    
+
     public func getCurrentFormatting() -> InlineFormatting {
-        // Sync current state from Lexical
-        domainBridge.syncFromLexical()
-        
-        // Get formatting from domain state
-        let state = domainBridge.getCurrentState()
-        return state.currentFormatting
+        bridge.currentFormatting()
     }
-    
+
     public func getCurrentBlockType() -> MarkdownBlockType {
-        // Sync current state from Lexical
-        domainBridge.syncFromLexical()
-        
-        // Get block type from domain state
-        let state = domainBridge.getCurrentState()
-        return state.currentBlockType
+        bridge.currentBlockType()
     }
 
     private func transformSelectedEmptyBlock(to blockType: MarkdownBlockType) -> Bool {
@@ -607,11 +544,6 @@ public final class MarkdownEditorContentView: UIView {
                 self.completeKeystrokeLog()
             }
             
-            if contentChanged {
-                // Sync domain state with Lexical state only for meaningful content edits.
-                self.domainBridge.syncFromLexical()
-            }
-
             // Record coarse undo/redo snapshots (best-effort).
             self.recordHistoryIfNeeded(
                 activeEditorState: activeEditorState,
@@ -755,12 +687,8 @@ public final class MarkdownEditorContentView: UIView {
                 // Check if this is an Enter key
                 if text == "\n" {
                     logger.logSimpleEvent("ENTER_DETECTED", details: "Enter key pressed via insertText")
-                    
-                    // Sync current state
-                    self.domainBridge.syncFromLexical()
-                    
-                    // Check if domain should handle this
-                    let state = self.domainBridge.currentDomainState
+
+                    let currentBlockType = self.bridge.currentBlockType()
                     let isInList = self.isSelectionInListItem()
                     let isLineEmpty = self.isCurrentLineEmpty()
                     
@@ -785,7 +713,7 @@ public final class MarkdownEditorContentView: UIView {
                             return true
                         case .smart:
                             let isHeading: Bool = {
-                                if case .heading = state.currentBlockType { return true }
+                                if case .heading = currentBlockType { return true }
                                 return false
                             }()
                             if isHeading {
@@ -835,23 +763,17 @@ public final class MarkdownEditorContentView: UIView {
                 
                 // Capture before state for logging
                 let beforeSnapshot = logger.createSnapshot(from: self.lexicalView.editor)
-                
-                // Sync current state
-                self.domainBridge.syncFromLexical()
-                
-                // Check if domain should handle this
-                let state = self.domainBridge.currentDomainState
-                
+
                 // If in a list and at start of empty line
-                let isInList = (state.currentBlockType == .unorderedList || state.currentBlockType == .orderedList)
+                let currentBlockType = self.bridge.currentBlockType()
+                let isInList = (currentBlockType == .unorderedList || currentBlockType == .orderedList)
                 let isLineEmpty = self.isCurrentLineEmpty()
                 let isAtLineStart = self.isCursorAtLineStart()
-                
+
                 if isInList && isLineEmpty && isAtLineStart {
                     logger.logSimpleEvent("BACKSPACE", details: "List context: handling empty item backspace via smart command")
 
-                    let command = self.domainBridge.createSmartBackspaceCommand()
-                    if case .success = self.domainBridge.execute(command) {
+                    if self.bridge.performSmartBackspace() {
                         return true
                     }
 
@@ -1045,7 +967,6 @@ public final class MarkdownEditorContentView: UIView {
         redoStack.removeAll()
         lastHistoryChangeAt = nil
         markExportDirty()
-        domainBridge.syncFromLexical()
         lastHistoryMarkdown = exportMarkdownForHistory()
 
         logKeystroke("Paste Markdown", beforeSnapshot: beforeSnapshot, action: "Parse markdown paste and insert nodes")
@@ -1735,7 +1656,7 @@ public final class MarkdownEditorContentView: UIView {
         }()
 
         let isEmpty: Bool = {
-            let result = domainBridge.exportDocument()
+            let result = bridge.exportDocument()
             if case .success(let doc) = result {
                 return doc.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }
@@ -1787,7 +1708,7 @@ public final class MarkdownEditorContentView: UIView {
     }
 
     private func exportMarkdownForHistory() -> String? {
-        switch domainBridge.exportDocument() {
+        switch bridge.exportDocument() {
         case .success(let doc):
             return doc.content
         case .failure:
