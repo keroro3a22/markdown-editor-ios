@@ -15,8 +15,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/jcfontecha/lexical-ios.git",
       "state" : {
-        "branch" : "main",
-        "revision" : "78beaa5fffd20d6134bab46b5420829ac678c313"
+        "revision" : "a78e6717b3b329e6b2d5a2c92ee40c22882037bd"
       }
     },
     {

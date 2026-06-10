@@ -421,7 +421,7 @@ public final class MarkdownEditorContentView: UIView {
 
             guard let block,
                   block.getParent() is RootNode,
-                  self.isVisibleTextEmpty(block.getTextContent()) else { return }
+                  isTextContentEmptyIgnoringEmptyInvisibles(block.getTextContent()) else { return }
 
             let targetBlockType: MarkdownBlockType = if blockTypeMatches(markdownBlockType(for: block), blockType) {
                 .paragraph
@@ -444,7 +444,7 @@ public final class MarkdownEditorContentView: UIView {
             }
 
             _ = try? block.replace(replaceWith: replacement)
-            let anchor = createTextNode(text: "\u{200B}")
+            let anchor = createTextNode(text: emptyTextCaretAnchor)
             try? replacement.append([anchor])
             let point = Point(key: anchor.key, offset: 0, type: .text)
             try? setSelection(RangeSelection(anchor: point, focus: point, format: selection.format))
@@ -934,14 +934,14 @@ public final class MarkdownEditorContentView: UIView {
               selection.anchor.type == .element,
               let element = try? selection.anchor.getNode() as? ElementNode,
               element.getParent() is RootNode,
-              isVisibleTextEmpty(element.getTextContent()) else { return false }
+              isTextContentEmptyIgnoringEmptyInvisibles(element.getTextContent()) else { return false }
 
         let anchor: TextNode
-        if let existingAnchor = element.getChildren().compactMap({ $0 as? TextNode }).first(where: { isVisibleTextEmpty($0.getTextContent()) }) {
-            _ = try? existingAnchor.setText("\u{200B}")
+        if let existingAnchor = element.getChildren().compactMap({ $0 as? TextNode }).first(where: { isTextContentEmptyIgnoringEmptyInvisibles($0.getTextContent()) }) {
+            _ = try? existingAnchor.setText(emptyTextCaretAnchor)
             anchor = existingAnchor
         } else if element.getChildrenSize() == 0 {
-            let newAnchor = createTextNode(text: "\u{200B}")
+            let newAnchor = createTextNode(text: emptyTextCaretAnchor)
             try? element.append([newAnchor])
             anchor = newAnchor
         } else {
@@ -958,21 +958,21 @@ public final class MarkdownEditorContentView: UIView {
             guard let root = getRoot(),
                   root.getChildrenSize() == 1,
                   let block = root.getFirstChild() as? ElementNode,
-                  self.isVisibleTextEmpty(block.getTextContent()) else { return }
+                  isTextContentEmptyIgnoringEmptyInvisibles(block.getTextContent()) else { return }
 
             let existingAnchor = block.getChildren().compactMap { $0 as? TextNode }.first { textNode in
-                self.isVisibleTextEmpty(textNode.getTextContent())
+                isTextContentEmptyIgnoringEmptyInvisibles(textNode.getTextContent())
             }
 
             let anchor: TextNode
             if let existingAnchor {
-                _ = try? existingAnchor.setText("\u{200B}")
+                _ = try? existingAnchor.setText(emptyTextCaretAnchor)
                 anchor = existingAnchor
             } else {
                 for child in block.getChildren() {
                     try? child.remove()
                 }
-                anchor = createTextNode(text: "\u{200B}")
+                anchor = createTextNode(text: emptyTextCaretAnchor)
                 try? block.append([anchor])
             }
 
@@ -981,32 +981,6 @@ public final class MarkdownEditorContentView: UIView {
             try? setSelection(RangeSelection(anchor: point, focus: point, format: format))
         }
     }
-
-    private func isVisibleTextEmpty(_ text: String) -> Bool {
-        textRemovingEmptyInvisibles(from: text).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private func textRemovingEmptyInvisibles(from text: String) -> String {
-        var visibleScalars = String.UnicodeScalarView()
-        for scalar in text.unicodeScalars where !Self.emptyTextInvisibleScalarValues.contains(scalar.value) {
-            visibleScalars.append(scalar)
-        }
-        return String(visibleScalars)
-    }
-
-    private func invisibleScalarCount(in text: String) -> Int {
-        text.unicodeScalars.reduce(0) { count, scalar in
-            count + (Self.emptyTextInvisibleScalarValues.contains(scalar.value) ? 1 : 0)
-        }
-    }
-
-    private static let emptyTextInvisibleScalarValues: Set<UInt32> = [
-        0x200B, // zero-width space
-        0x200C, // zero-width non-joiner
-        0x200D, // zero-width joiner
-        0x2060, // word joiner
-        0xFEFF  // zero-width no-break space / BOM
-    ]
 
     private func syncNativeSelectionToLexicalSelection() {
         var nativeRange: NSRange?
@@ -1285,7 +1259,7 @@ public final class MarkdownEditorContentView: UIView {
             
             // Check if the node has only whitespace/invisible caret anchors or is empty.
             let rawText = checkNode.getTextContent()
-            isEmpty = self.isVisibleTextEmpty(rawText)
+            isEmpty = isTextContentEmptyIgnoringEmptyInvisibles(rawText)
         }
         
         return isEmpty
@@ -1332,10 +1306,10 @@ public final class MarkdownEditorContentView: UIView {
 
             guard let textNode = try? anchor.getNode() as? TextNode else { return }
             let raw = textNode.getTextContent()
-            let visibleText = self.textRemovingEmptyInvisibles(from: raw)
+            let visibleText = textContentRemovingEmptyInvisibles(raw)
             let visibleOffset: Int = {
                 let prefix = self.prefix(of: raw, upToUTF16Offset: anchor.offset)
-                return self.textRemovingEmptyInvisibles(from: prefix).count
+                return textContentRemovingEmptyInvisibles(prefix).count
             }()
 
             guard let paragraph = textNode.getParent() as? ParagraphNode else { return }
@@ -1420,7 +1394,7 @@ public final class MarkdownEditorContentView: UIView {
                 _ = try? textNode.setText("")
                 let heading = createHeadingNode(headingTag: level.lexicalType)
                 _ = try? paragraph.replace(replaceWith: heading)
-                let textAnchor = createTextNode(text: "\u{200B}")
+                let textAnchor = createTextNode(text: emptyTextCaretAnchor)
                 try? heading.append([textAnchor])
                 let anchor = Point(key: textAnchor.key, offset: 0, type: .text)
                 try? setSelection(RangeSelection(anchor: anchor, focus: anchor, format: selection.format))
@@ -1432,7 +1406,7 @@ public final class MarkdownEditorContentView: UIView {
 
                 // Create an empty list item with ZWSP to ensure the bullet/number renders and the caret has a text anchor.
                 let listItem = ListItemNode()
-                let zwsp = createTextNode(text: "\u{200B}")
+                let zwsp = createTextNode(text: emptyTextCaretAnchor)
                 try? listItem.append([zwsp])
 
                 func selectZWSP() {
@@ -1492,15 +1466,15 @@ public final class MarkdownEditorContentView: UIView {
         guard let textNode = try? selection.anchor.getNode() as? TextNode else { return }
 
         let raw = textNode.getTextContent()
-        guard isVisibleTextEmpty(raw) else { return }
+        guard isTextContentEmptyIgnoringEmptyInvisibles(raw) else { return }
 
-        let cleaned = textRemovingEmptyInvisibles(from: raw)
+        let cleaned = textContentRemovingEmptyInvisibles(raw)
 
         guard cleaned != raw else { return }
 
         // Preserve the caret position relative to visible text.
         let prefix = prefix(of: raw, upToUTF16Offset: selection.anchor.offset)
-        let invisiblesBefore = invisibleScalarCount(in: prefix)
+        let invisiblesBefore = emptyTextInvisibleScalarCount(in: prefix)
         let newOffset = max(0, selection.anchor.offset - invisiblesBefore)
         let clampedOffset = min(newOffset, (cleaned as NSString).length)
 
@@ -1563,7 +1537,7 @@ public final class MarkdownEditorContentView: UIView {
                let textNode = try? anchor.getNode() as? TextNode {
                 let fullText = textNode.getTextContent()
                 let prefix = self.prefix(of: fullText, upToUTF16Offset: anchor.offset)
-                let sanitized = self.textRemovingEmptyInvisibles(from: prefix)
+                let sanitized = textContentRemovingEmptyInvisibles(prefix)
                 isAtStart = sanitized.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }
         }
@@ -1758,7 +1732,7 @@ public final class MarkdownEditorContentView: UIView {
             var blockType: MarkdownBlockType?
             try? lexicalView.editor.read {
                 guard let root = getRoot(),
-                      self.isVisibleTextEmpty(root.getTextContent()) else { return }
+                      isTextContentEmptyIgnoringEmptyInvisibles(root.getTextContent()) else { return }
                 guard let selection = try? getSelection() as? RangeSelection,
                       let node = try? selection.anchor.getNode() else { return }
 
@@ -1877,7 +1851,7 @@ public final class MarkdownEditorContentView: UIView {
                 var textNodes = collectTextNodes(from: node)
                 if textNodes.isEmpty {
                     // Ensure a text node exists so we can create a text selection.
-                    let seedText: String = (node is ListItemNode || node is CodeNode) ? "\u{200B}" : ""
+                    let seedText: String = (node is ListItemNode || node is CodeNode) ? emptyTextCaretAnchor : ""
                     let textNode = TextNode(text: seedText)
                     try? node.append([textNode])
                     textNodes = [textNode]
@@ -1915,7 +1889,7 @@ public final class MarkdownEditorContentView: UIView {
                     for child in node.getChildren() {
                         try? child.remove()
                     }
-                    let zwsp = TextNode(text: "\u{200B}")
+                    let zwsp = TextNode(text: emptyTextCaretAnchor)
                     try? node.append([zwsp])
                     let p = Point(key: zwsp.key, offset: zwsp.getTextContentSize(), type: .text)
                     getActiveEditorState()?.selection = RangeSelection(anchor: p, focus: p, format: TextFormat())

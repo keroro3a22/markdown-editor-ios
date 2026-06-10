@@ -136,6 +136,8 @@ internal struct StreamingReplacementMatchResult {
 }
 
 internal enum StreamingReplacementMatching {
+    // Match-normalization set, NOT the emptiness set (Lexical.emptyTextInvisibleScalarValues):
+    // U+2060 (word joiner) is deliberately excluded so documents containing it still match.
     private static let zeroWidthScalars = Set<Unicode.Scalar>([
         "\u{200B}", // zero width space
         "\u{200C}", // zero width non-joiner

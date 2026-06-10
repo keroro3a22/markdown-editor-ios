@@ -20,10 +20,12 @@
 
 ## Dependency notes
 
-The default package dependency is remote:
+The package dependency is remote and pinned to an exact revision (a tagged commit of the hard fork):
 - `https://github.com/jcfontecha/lexical-ios.git`
 
-For deep Lexical work, temporarily switch to a local checkout in `Package.swift` with:
+To bump the fork: commit + tag in `../lexical-ios` (continue the `0.x.0` lineage), push with tags, then update the `revision:` SHA in `Package.swift` and re-resolve **both** resolved files (root `Package.resolved` and `Demo/MarkdownEditor.xcodeproj/.../swiftpm/Package.resolved`).
+
+For deep Lexical work, use a local override instead of editing the pin — either drag `../lexical-ios` into the Xcode workspace (local packages shadow remote ones), or temporarily switch `Package.swift` to:
 - `.package(path: "../lexical-ios")`
 
-Restore the remote dependency before committing release-facing changes.
+Restore the remote pinned dependency before committing release-facing changes.

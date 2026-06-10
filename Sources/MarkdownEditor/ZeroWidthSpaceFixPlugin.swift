@@ -49,7 +49,7 @@ public class ZeroWidthSpaceFixPlugin: Plugin {
 
             let children = listItem.getChildren()
             if children.isEmpty {
-                let zwsp = createTextNode(text: "\u{200B}")
+                let zwsp = createTextNode(text: emptyTextCaretAnchor)
                 try? listItem.append([zwsp])
 
                 if let selection = try? getSelection() as? RangeSelection,
@@ -65,7 +65,7 @@ public class ZeroWidthSpaceFixPlugin: Plugin {
 
             // If the list item has a single empty TextNode, normalize it to ZWSP to keep it from being pruned.
             if children.count == 1, let text = children[0] as? TextNode, text.getTextContent().isEmpty {
-                _ = try? text.setText("\u{200B}")
+                _ = try? text.setText(emptyTextCaretAnchor)
 
                 if let selection = try? getSelection() as? RangeSelection,
                    selection.isCollapsed(),

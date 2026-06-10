@@ -181,7 +181,7 @@ struct MarkdownImporter {
                 try? listItem.append(textNodes)
                 if listItem.getChildren().isEmpty {
                     // Keep empty items selectable/editable.
-                    try? listItem.append([createTextNode(text: "\u{200B}")])
+                    try? listItem.append([createTextNode(text: emptyTextCaretAnchor)])
                 }
                 try? list.append([listItem])
                 
