@@ -166,18 +166,6 @@ public class MarkdownDomainBridge {
         )
     }
     
-    /// Create a smart enter command
-    public func createSmartEnterCommand() -> MarkdownCommand {
-        return SmartEnterCommand(
-            at: currentDomainState.selection.start,
-            context: MarkdownCommandContext(
-                documentService: documentService,
-                formattingService: formattingService,
-                stateService: stateService
-            )
-        )
-    }
-    
     /// Create a smart backspace command
     public func createSmartBackspaceCommand() -> MarkdownCommand {
         return SmartBackspaceCommand(
@@ -453,12 +441,6 @@ public class MarkdownDomainBridge {
         case let blockCommand as SetBlockTypeCommand:
             applyBlockTypeCommand(blockCommand, to: editor)
             
-        case let insertCommand as InsertTextCommand:
-            applyInsertTextCommand(insertCommand, to: editor)
-            
-        case let smartEnterCommand as SmartEnterCommand:
-            applySmartEnterCommand(smartEnterCommand, to: editor)
-            
         case let smartBackspaceCommand as SmartBackspaceCommand:
             applySmartBackspaceCommand(smartBackspaceCommand, to: editor)
             
@@ -575,38 +557,6 @@ public class MarkdownDomainBridge {
         }
         
         return .paragraph
-    }
-    
-    private func applyInsertTextCommand(_ command: InsertTextCommand, to editor: Editor) {
-        guard let selection = try? getSelection() as? RangeSelection else { return }
-        try? selection.insertText(command.text)
-    }
-    
-    private func applySmartEnterCommand(_ command: SmartEnterCommand, to editor: Editor) {
-        // Smart enter: Convert empty list item to paragraph
-        guard let selection = try? getSelection() as? RangeSelection else { return }
-        
-        // Determine list item at selection
-        let listItem: ListItemNode? = {
-            let anchor = selection.anchor
-            if anchor.type == .element, let node = try? anchor.getNode() as? ListItemNode {
-                return node
-            } else if let node = try? anchor.getNode() {
-                return self.findParentListItem(node)
-            }
-            return nil
-        }()
-        
-        if let listItem = listItem {
-            if listItem.isEffectivelyEmpty() {
-                setBlocksType(selection: selection) { createParagraphNode() }
-                return
-            }
-        }
-        
-        // Return/Enter means paragraph insertion in Lexical. For list items, that is the path
-        // that creates/splits sibling list items; line breaks stay inside the current item.
-        editor.dispatchCommand(type: .insertParagraph)
     }
     
     private func applySmartBackspaceCommand(_ command: SmartBackspaceCommand, to editor: Editor) {

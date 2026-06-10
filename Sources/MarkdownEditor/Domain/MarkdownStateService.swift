@@ -11,18 +11,6 @@ import Foundation
 
 /// Service for managing markdown editor state operations
 public protocol MarkdownStateService {
-    /// Apply a state change and return the new state
-    func applyChange(
-        _ change: StateChange,
-        to state: MarkdownEditorState
-    ) -> Result<MarkdownEditorState, DomainError>
-    
-    /// Apply multiple state changes atomically
-    func applyChanges(
-        _ changes: [StateChange],
-        to state: MarkdownEditorState
-    ) -> Result<MarkdownEditorState, DomainError>
-    
     /// Validate that a state is consistent and valid
     func validateState(_ state: MarkdownEditorState) -> ValidationResult
     
@@ -56,37 +44,6 @@ public class DefaultMarkdownStateService: MarkdownStateService {
     ) {
         self.documentService = documentService
         self.formattingService = formattingService ?? DefaultMarkdownFormattingService(documentService: documentService)
-    }
-    
-    public func applyChange(
-        _ change: StateChange,
-        to state: MarkdownEditorState
-    ) -> Result<MarkdownEditorState, DomainError> {
-        
-        guard change.canApply(to: state) else {
-            return .failure(.unsupportedOperation("Change cannot be applied: \(change.description)"))
-        }
-        
-        return change.apply(to: state)
-    }
-    
-    public func applyChanges(
-        _ changes: [StateChange],
-        to state: MarkdownEditorState
-    ) -> Result<MarkdownEditorState, DomainError> {
-        
-        var currentState = state
-        
-        for change in changes {
-            switch applyChange(change, to: currentState) {
-            case .success(let newState):
-                currentState = newState
-            case .failure(let error):
-                return .failure(error)
-            }
-        }
-        
-        return .success(currentState)
     }
     
     public func validateState(_ state: MarkdownEditorState) -> ValidationResult {

@@ -133,10 +133,8 @@ public class MarkdownCommandLogger {
     private func extractCommandName(from command: MarkdownCommand) -> String {
         switch command {
         case is SetBlockTypeCommand: return "Toggle Block Type"
-        case is SmartEnterCommand: return "Smart Enter"
         case is SmartBackspaceCommand: return "Smart Backspace"
         case is ApplyFormattingCommand: return "Apply Formatting"
-        case is InsertTextCommand: return "Insert Text"
         default: return "Unknown Command"
         }
     }
@@ -145,14 +143,10 @@ public class MarkdownCommandLogger {
         switch command {
         case let cmd as SetBlockTypeCommand:
             return "SetBlockType(\(cmd.blockType))"
-        case let cmd as SmartEnterCommand:
-            return "SmartEnter(at: \(cmd.position.offset))"
         case let cmd as SmartBackspaceCommand:
             return "SmartBackspace(at: \(cmd.position.offset))"
         case let cmd as ApplyFormattingCommand:
             return "ApplyFormatting(\(cmd.formatting))"
-        case let cmd as InsertTextCommand:
-            return "InsertText(\"\(cmd.text)\")"
         default:
             return command.description
         }
