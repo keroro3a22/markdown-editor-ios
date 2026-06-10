@@ -61,26 +61,32 @@ final class MarkdownLexicalBridge {
         logger?.logOperationAction("ApplyFormatting(\(formatting))")
 
         var rejection: String?
-        try? editor.read {
-            if Self.blockTypeAtSelection() == .codeBlock {
-                rejection = "Inline formatting is not supported in code blocks"
-                return
+        do {
+            try editor.read {
+                if Self.blockTypeAtSelection() == .codeBlock {
+                    rejection = "Inline formatting is not supported in code blocks"
+                    return
+                }
+                if formatting.contains(.code),
+                   !formatting.isDisjoint(with: [.bold, .italic, .strikethrough]) {
+                    rejection = "Code formatting cannot be combined with other formatting"
+                    return
+                }
+                if Self.isSelectionMultiBlock() {
+                    rejection = "Multi-block formatting is not supported"
+                    return
+                }
+                let current = Self.formattingAtSelection()
+                let exclusive: InlineFormatting = [.bold, .italic, .strikethrough]
+                if (current.contains(.code) && !formatting.isDisjoint(with: exclusive))
+                    || (formatting.contains(.code) && !current.isDisjoint(with: exclusive)) {
+                    rejection = "Code formatting cannot be combined with other formatting"
+                }
             }
-            if formatting.contains(.code),
-               !formatting.isDisjoint(with: [.bold, .italic, .strikethrough]) {
-                rejection = "Code formatting cannot be combined with other formatting"
-                return
-            }
-            if Self.isSelectionMultiBlock() {
-                rejection = "Multi-block formatting is not supported"
-                return
-            }
-            let current = Self.formattingAtSelection()
-            let exclusive: InlineFormatting = [.bold, .italic, .strikethrough]
-            if (current.contains(.code) && !formatting.isDisjoint(with: exclusive))
-                || (formatting.contains(.code) && !current.isDisjoint(with: exclusive)) {
-                rejection = "Code formatting cannot be combined with other formatting"
-            }
+        } catch {
+            // Never dispatch formatting whose guards could not be evaluated.
+            logger?.logOperationComplete("Apply Formatting", afterState: nil, success: false)
+            return .failure(.editorStateCorrupted)
         }
 
         if let rejection {

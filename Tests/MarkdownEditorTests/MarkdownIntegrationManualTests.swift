@@ -1,7 +1,7 @@
 /*
  * MarkdownIntegrationManualTests
  * 
- * Tests to manually verify that the domain layer is actually working with Lexical.
+ * Tests to manually verify the editor view API end-to-end against Lexical.
  */
 
 import XCTest
@@ -84,8 +84,8 @@ final class MarkdownIntegrationManualTests: XCTestCase {
         }
     }
     
-    func testDomainBridgeConnection() {
-        // Verify observable domain-backed behavior rather than private storage layout.
+    func testEditorBridgeConnection() {
+        // Verify observable bridge-backed behavior rather than private storage layout.
         let editor = MarkdownEditorView()
 
         let loadResult = editor.loadMarkdown(MarkdownDocument(content: "- Item"))
