@@ -1585,6 +1585,11 @@ public final class MarkdownEditorContentView: UIView {
             .bulletWeight: markdownTheme.spacing.bulletWeight.rawValue,  // Bullet font weight
             .bulletVerticalOffset: markdownTheme.spacing.bulletVerticalOffset  // Bullet vertical positioning
         ]
+
+        theme.link = [
+            .foregroundColor: markdownTheme.colors.accent,
+            .underlineStyle: NSUnderlineStyle.single.rawValue
+        ]
         
         return theme
     }
